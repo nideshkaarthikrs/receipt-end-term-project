@@ -64,6 +64,7 @@ src/
 │   ├── Login.jsx
 │   ├── Modal.jsx                 Reusable, focus-trapping dialog
 │   ├── NewProjectModal.jsx
+│   ├── EditProjectModal.jsx
 │   ├── NotFound.jsx
 │   ├── PDFExportButton.jsx       Lazy-loaded
 │   ├── ProjectCard.jsx
@@ -105,8 +106,8 @@ Every concept on the syllabus maps to a concrete site in the code:
 | Conditional rendering  | loading / empty / error / chain-broken / revoked-share states     |
 | Lists & keys           | projects grid, timeline entries                                   |
 | Lifting state up       | `AddEntryForm` reports new entry id up to `ProjectView`           |
-| Controlled components  | every form field across `Login`, `NewProjectModal`, `AddEntryForm`|
-| React Router v6        | 5 routes in `App.jsx` (1 lazy)                                    |
+| Controlled components  | every form field across `Login`, `NewProjectModal`, `EditProjectModal`, `AddEntryForm` |
+| React Router v6        | 6 routes in `App.jsx` (1 lazy)                                    |
 | Context API            | `AuthProvider` + `useAuth`                                        |
 | `React.lazy` + Suspense| `SharePage` route, `PDFExportButton` inside `ProjectView`         |
 | `React.memo`           | `TimelineEntry`                                                   |
