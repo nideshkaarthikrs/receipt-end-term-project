@@ -1,0 +1,9 @@
+/* App-level styles that are not expressible with Tailwind utilities.
+ * Keep this file small — prefer Tailwind classes on elements. */
+
+.timeline-rail {
+  background-image: linear-gradient(to bottom, #cbd5e1 0, #cbd5e1 100%);
+  background-size: 2px 100%;
+  background-repeat: no-repeat;
+  background-position: 11px top;
+}

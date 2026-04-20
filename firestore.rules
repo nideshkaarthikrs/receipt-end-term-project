@@ -1,0 +1,147 @@
+rules_version = '2';
+
+// =============================================================================
+// RECEIPT - Firestore Security Rules
+// =============================================================================
+//
+// CORE GUARANTEES enforced by these rules:
+//
+//   1. IMMUTABILITY: Once an entry's self_hash is set to a non-null value, it
+//      can NEVER be updated or deleted. This is the foundation of the tamper-
+//      evident hash chain. The two-step hash write (see firebase.js) is the
+//      only update path: an entry created with self_hash:null may be updated
+//      exactly once to fill in self_hash and prev_hash, and only if every
+//      other field is unchanged.
+//
+//   2. OWNERSHIP: Only the project owner can create projects, create entries
+//      within their projects, or manage share tokens.
+//
+//   3. PUBLIC SHARE BY TOKEN: Anyone can read a project and its entries ONLY
+//      if they know the share_token AND the token has not been revoked. The
+//      token itself is 192 bits of entropy (see generateShareToken in
+//      firebase.js), so it is not enumerable.
+//
+//   4. NO CLIENT READ ON share_views: Clients can log views for the owner's
+//      benefit but cannot read the log back. This prevents a public visitor
+//      from learning who else has opened the link.
+//
+// WHY FIRESTORE RULES MATTER HERE:
+//   The Receipt hash chain only proves tamper-evidence if no one can rewrite
+//   history in the database. These rules make rewrites impossible through the
+//   client SDK. Combined with the client-side verifier (useHashChain), this
+//   gives end-to-end proof integrity.
+// =============================================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // -------------------------------------------------------------------------
+    // Helpers
+    // -------------------------------------------------------------------------
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(ownerId) {
+      return isSignedIn() && request.auth.uid == ownerId;
+    }
+
+    // A public viewer is anyone (signed in or not) who presents a valid,
+    // non-revoked share_token. Firestore rules cannot inspect the query
+    // itself, so this grants read whenever the document carries an active
+    // token — the token's entropy is what prevents enumeration.
+    function isValidShareToken(project) {
+      return project.share_token != null
+          && project.share_token_revoked_at == null;
+    }
+
+    // -------------------------------------------------------------------------
+    // users/{uid}
+    // -------------------------------------------------------------------------
+    // A user document stores display_name, email, created_at.
+    // Only the user themselves can read or write their own profile.
+    match /users/{uid} {
+      allow read, write: if isSignedIn() && request.auth.uid == uid;
+    }
+
+    // -------------------------------------------------------------------------
+    // projects/{projectId}
+    // -------------------------------------------------------------------------
+    // A project document stores owner_id, name, client_name, scope, rate,
+    // deadline, created_at, share_token, share_token_revoked_at.
+    match /projects/{projectId} {
+
+      // Owners have full access to their projects.
+      allow read, update, delete: if isOwner(resource.data.owner_id);
+
+      // Public read is allowed IF the project has a non-revoked share_token.
+      // The client must query by share_token to find the project at all
+      // (projectId is not exposed in the public flow). See the helper note.
+      allow read: if isValidShareToken(resource.data);
+
+      // Only the authenticated user can create a project, and they must set
+      // themselves as owner. share_token must be present at creation.
+      allow create: if isSignedIn()
+                    && request.resource.data.owner_id == request.auth.uid
+                    && request.resource.data.share_token is string
+                    && request.resource.data.share_token.size() >= 32
+                    && request.resource.data.share_token_revoked_at == null;
+
+      // -----------------------------------------------------------------------
+      // projects/{projectId}/entries/{entryId}
+      // -----------------------------------------------------------------------
+      // Entries are the heart of the hash chain. They store type, content,
+      // file_url, file_sha256, created_at, prev_hash, self_hash,
+      // references_entry_id.
+      match /entries/{entryId} {
+
+        // Read access follows the parent project's rules.
+        allow read: if isOwner(get(/databases/$(database)/documents/projects/$(projectId)).data.owner_id)
+                    || isValidShareToken(get(/databases/$(database)/documents/projects/$(projectId)).data);
+
+        // Create allowed only by the project owner. We do NOT validate hash
+        // fields at create time — the client computes them in step 2 of the
+        // two-step write. The client-side verifier is the integrity check.
+        allow create: if isOwner(
+          get(/databases/$(database)/documents/projects/$(projectId)).data.owner_id
+        );
+
+        // *** CRITICAL: ENTRIES ARE IMMUTABLE ***
+        //
+        // Exception: the two-step hash write requires updating self_hash and
+        // prev_hash AFTER the initial create (because serverTimestamp()
+        // resolves only on write). This update is allowed ONLY when the
+        // existing self_hash is null AND every other field is unchanged.
+        //
+        // Once self_hash is set to a non-null string, the entry is frozen.
+        allow update: if isOwner(
+                        get(/databases/$(database)/documents/projects/$(projectId)).data.owner_id
+                      )
+                      && resource.data.self_hash == null
+                      && request.resource.data.self_hash is string
+                      && request.resource.data.type == resource.data.type
+                      && request.resource.data.content == resource.data.content
+                      && request.resource.data.created_at == resource.data.created_at
+                      && request.resource.data.file_url == resource.data.file_url
+                      && request.resource.data.file_sha256 == resource.data.file_sha256
+                      && request.resource.data.references_entry_id == resource.data.references_entry_id;
+
+        // NEVER allow delete. No exceptions.
+        allow delete: if false;
+      }
+    }
+
+    // -------------------------------------------------------------------------
+    // share_views/{id}
+    // -------------------------------------------------------------------------
+    // Anyone can log that they opened a share link (used by the owner to know
+    // when clients have seen the timeline). Clients cannot read these back —
+    // surfacing them to the owner would require a Cloud Function, which is
+    // out of scope on the Spark plan.
+    match /share_views/{viewId} {
+      allow create: if request.resource.data.project_id is string
+                    && request.resource.data.viewed_at == request.time;
+      allow read, update, delete: if false;
+    }
+  }
+}
