@@ -40,16 +40,10 @@ export default function Landing() {
           <Link to={user ? '/dashboard' : '/login'} className="btn-primary">
             {user ? 'Open dashboard' : 'Try it now'}
           </Link>
-          <a
-            href="#how"
-            className="btn-secondary"
-          >
-            How it works
-          </a>
         </div>
       </section>
 
-      <footer id="how" className="border-t border-ink-200 pt-6 text-sm text-ink-500">
+      <footer className="border-t border-ink-200 pt-6 text-sm text-ink-500">
         <p>
           Each entry is SHA-256 hashed with the hash of the entry before it.
           Edit anything, and the chain visibly breaks.
