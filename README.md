@@ -2,6 +2,8 @@
 
 Tamper-evident proof-of-work logs for freelancers.
 
+**Live demo:** <https://receipt-end-term-project.vercel.app>
+
 > End-Term Project · Building Web Applications with React · Scaler School of Technology
 > Author: Nidesh Kaarthik R S
 
