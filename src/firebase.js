@@ -46,23 +46,13 @@ export const auth = getAuth(firebaseApp);
 export const db = getFirestore(firebaseApp);
 export const googleProvider = new GoogleAuthProvider();
 
-// =============================================================================
-// Share-token generation
-// =============================================================================
-// 192 bits of entropy from the Web Crypto RNG. PRD requires >= 128 bits.
 export function generateShareToken() {
   const bytes = new Uint8Array(24);
   crypto.getRandomValues(bytes);
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-// =============================================================================
-// SHA-256 hash chain
-// =============================================================================
-// Canonical JSON: object keys sorted alphabetically, values stringified by
-// JSON.stringify with no extra whitespace. Two clients hashing the same logical
-// payload must produce byte-identical input — that is what makes the chain
-// reproducible.
+// Keys sorted alphabetically so the same payload always hashes to the same digest.
 function canonicalJSON(value) {
   if (value === null || typeof value !== 'object') {
     return JSON.stringify(value);
@@ -88,9 +78,6 @@ async function sha256Hex(text) {
   ).join('');
 }
 
-// computeEntryHash takes the canonical fields that constitute an entry's
-// identity inside the chain, builds a deterministic JSON string, and returns
-// its SHA-256 hex digest. Order of fields in the input object does not matter.
 export async function computeEntryHash(payload) {
   const canonical = {
     id: payload.id,
@@ -103,25 +90,8 @@ export async function computeEntryHash(payload) {
   return sha256Hex(canonicalJSON(canonical));
 }
 
-// =============================================================================
-// Entry creation — the two-step seal
-// =============================================================================
-// Firestore's serverTimestamp() resolves only at write time, so we cannot
-// compute the SHA-256 hash before the first write. The flow:
-//
-//   1. addDoc with self_hash:null and prev_hash:null using serverTimestamp().
-//   2. getDoc to read the resolved created_at.
-//   3. Query the most recent SEALED entry (self_hash != null) to obtain prev_hash.
-//      If none exists, prev_hash = "GENESIS".
-//   4. Compute self_hash from the canonical payload + prev_hash.
-//   5. updateDoc to fill in self_hash and prev_hash. The Firestore Security
-//      Rules permit this update only while self_hash was null and every other
-//      field is unchanged.
-//
-// Concurrent writes to the same project are serialized client-side via a per-
-// project promise queue. The Spark plan + single-user-per-project usage model
-// means cross-device concurrent writes are vanishingly rare; a server-side
-// queue would require Cloud Functions (Blaze plan).
+// serverTimestamp() only resolves at write time, so each entry needs two writes:
+// one to create with self_hash:null, then one to fill in the hash. See README.
 const projectWriteQueues = new Map();
 
 export async function createEntry(projectId, payload) {
@@ -139,7 +109,6 @@ export async function createEntry(projectId, payload) {
 async function sealNewEntry(projectId, payload) {
   const entriesCol = collection(db, 'projects', projectId, 'entries');
 
-  // Step 1 — initial write with null hash fields.
   const newRef = await addDoc(entriesCol, {
     type: payload.type,
     content: payload.content,
@@ -151,13 +120,10 @@ async function sealNewEntry(projectId, payload) {
     prev_hash: null,
   });
 
-  // Step 2 — read back to obtain the resolved server timestamp.
   const snap = await getDoc(newRef);
   const data = snap.data();
   const createdAtIso = data.created_at.toDate().toISOString();
 
-  // Step 3 — find the most recent sealed entry's hash. Walk entries newest-first
-  // and skip our own unsealed doc. Single-field orderBy needs no composite index.
   const prevQuery = query(
     entriesCol,
     orderBy('created_at', 'desc'),
@@ -174,7 +140,6 @@ async function sealNewEntry(projectId, payload) {
     }
   }
 
-  // Step 4 — compute the hash.
   const selfHash = await computeEntryHash({
     id: newRef.id,
     type: data.type,
@@ -184,16 +149,11 @@ async function sealNewEntry(projectId, payload) {
     prev_hash: prevHash,
   });
 
-  // Step 5 — seal. Rules enforce that self_hash transitions from null to a
-  // string exactly once and that no other field changes during this update.
   await updateDoc(newRef, { self_hash: selfHash, prev_hash: prevHash });
 
   return { id: newRef.id, self_hash: selfHash, prev_hash: prevHash };
 }
 
-// =============================================================================
-// Project lookup by share token (for public SharePage)
-// =============================================================================
 export async function findProjectByShareToken(token) {
   if (!token) return null;
   const q = query(
@@ -208,7 +168,6 @@ export async function findProjectByShareToken(token) {
   return { id: docSnap.id, ...docSnap.data() };
 }
 
-// Project doc reference helper.
 export function projectDoc(projectId) {
   return doc(db, 'projects', projectId);
 }

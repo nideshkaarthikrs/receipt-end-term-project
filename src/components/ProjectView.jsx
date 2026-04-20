@@ -1,10 +1,13 @@
 import { lazy, Suspense, useCallback, useMemo, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import { deleteDoc, doc } from 'firebase/firestore';
 import AppHeader from './AppHeader.jsx';
 import AddEntryForm from './AddEntryForm.jsx';
 import ChainStatusBadge from './ChainStatusBadge.jsx';
+import EditProjectModal from './EditProjectModal.jsx';
 import ShareControls from './ShareControls.jsx';
 import Timeline from './Timeline.jsx';
+import { db } from '../firebase.js';
 import useAuth from '../hooks/useAuth.js';
 import useProject from '../hooks/useProject.js';
 import useProjectEntries from '../hooks/useProjectEntries.js';
@@ -16,6 +19,7 @@ const PDFExportButton = lazy(() => import('./PDFExportButton.jsx'));
 
 export default function ProjectView() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const { user } = useAuth();
   const { project, loading: projectLoading, error: projectError } = useProject(id);
   const { entries, loading: entriesLoading } = useProjectEntries(id);
@@ -23,11 +27,30 @@ export default function ProjectView() {
 
   const [entryModalOpen, setEntryModalOpen] = useState(false);
   const [shareModalOpen, setShareModalOpen] = useState(false);
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [latestId, setLatestId] = useState(null);
 
   const handleEntryCreated = useCallback((newId) => setLatestId(newId), []);
   const handleCloseEntry = useCallback(() => setEntryModalOpen(false), []);
   const handleCloseShare = useCallback(() => setShareModalOpen(false), []);
+  const handleCloseEdit = useCallback(() => setEditModalOpen(false), []);
+
+  const handleDelete = useCallback(async () => {
+    if (!project) return;
+    const ok = window.confirm(
+      `Delete "${project.name}"? This cannot be undone. The timeline entries will no longer be accessible through the app.`,
+    );
+    if (!ok) return;
+    setDeleting(true);
+    try {
+      await deleteDoc(doc(db, 'projects', project.id));
+      navigate('/dashboard');
+    } catch (err) {
+      setDeleting(false);
+      window.alert(`Could not delete project: ${err.message}`);
+    }
+  }, [project, navigate]);
 
   const deliverables = useMemo(
     () => entries.filter((e) => e.type === 'deliverable'),
@@ -133,6 +156,13 @@ export default function ProjectView() {
           >
             Share link
           </button>
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => setEditModalOpen(true)}
+          >
+            Edit
+          </button>
           <Suspense
             fallback={
               <button type="button" className="btn-secondary" disabled>
@@ -142,6 +172,14 @@ export default function ProjectView() {
           >
             <PDFExportButton project={project} entries={entries} />
           </Suspense>
+          <button
+            type="button"
+            className="btn-secondary text-red-700 hover:bg-red-50"
+            onClick={handleDelete}
+            disabled={deleting}
+          >
+            {deleting ? 'Deleting…' : 'Delete'}
+          </button>
         </div>
 
         {entriesLoading ? (
@@ -169,6 +207,12 @@ export default function ProjectView() {
         project={project}
         open={shareModalOpen}
         onClose={handleCloseShare}
+      />
+
+      <EditProjectModal
+        open={editModalOpen}
+        onClose={handleCloseEdit}
+        project={project}
       />
     </>
   );
